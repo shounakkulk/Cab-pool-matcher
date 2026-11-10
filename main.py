@@ -2,15 +2,45 @@ import json
 import os
 import heapq
 from collections import defaultdict
-from models import Cab, RideRequest, VALID_DESTINATIONS, VALID_TIME_SLOTS
+
+VALID_DESTINATIONS = {"Delhi", "Jaipur"}
+VALID_TIME_SLOTS = {"Morning", "Afternoon", "Evening", "Night"}
+STATE_FILE = "app_state.json"
+CABS_FILE = "cabs.json"
+
+class RideRequest:
+    def __init__(self, name: str, destination: str, time_slot: str, year: int, request_id: int):
+        self.name = name
+        self.destination = destination
+        self.time_slot = time_slot
+        self.year = year
+        self.request_id = request_id
+
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "destination": self.destination,
+            "time_slot": self.time_slot,
+            "year": self.year,
+            "request_id": self.request_id
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            name=data["name"],
+            destination=data["destination"],
+            time_slot=data["time_slot"],
+            year=data["year"],
+            request_id=data["request_id"]
+        )
+
 
 class PriorityRideQueue:
-    """Trip-specific heap queue maintaining senior priority (5 to 1) and FIFO tie-breaking."""
     def __init__(self):
         self._heap = []
 
     def push(self, request: RideRequest):
-
         heap_item = (-request.year, request.request_id, request)
         heapq.heappush(self._heap, heap_item)
 
@@ -21,11 +51,8 @@ class PriorityRideQueue:
         return request
 
     def peek_n(self, n: int) -> list[RideRequest]:
-        """Returns top n requests in priority order without removing them."""
         sorted_elements = sorted(self._heap)
         result = []
-        
-
         count = 0
         for item in sorted_elements:
             if count >= n:
@@ -33,11 +60,9 @@ class PriorityRideQueue:
             request_obj = item[2]
             result.append(request_obj)
             count += 1
-            
         return result
 
     def get_all(self) -> list[RideRequest]:
-        """Returns all requests sorted by priority."""
         sorted_elements = sorted(self._heap)
         result = []
         for item in sorted_elements:
@@ -53,36 +78,111 @@ class PriorityRideQueue:
         return len(self._heap)
 
 
+class Cab:
+    def __init__(self, driver: str, seats: int, destination: str, time_slot: str, has_left: bool = False, passengers: list = None):
+        self.driver = driver
+        self.seats = seats
+        self.destination = destination
+        self.time_slot = time_slot
+        self.has_left = has_left
+        
+        if passengers is not None:
+            self.passengers = passengers
+        else:
+            self.passengers = []
+
+    @property
+    def remaining_seats(self) -> int:
+        return self.seats - len(self.passengers)
+
+    def to_dict(self):
+        return {
+            "driver": self.driver,
+            "seats": self.seats,
+            "destination": self.destination,
+            "time_slot": self.time_slot,
+            "has_left": self.has_left,
+            "passengers": self.passengers
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            driver=data["driver"],
+            seats=data["seats"],
+            destination=data["destination"],
+            time_slot=data["time_slot"],
+            has_left=data.get("has_left", False),
+            passengers=data.get("passengers", [])
+        )
+
+
 class CabPoolApp:
     def __init__(self):
         self.cabs = []
         self.queues = defaultdict(PriorityRideQueue)
         self.request_counter = 0
-        self.load_cabs()
+        self.load_data()
 
     def get_trip_key(self, dest: str, slot: str) -> tuple[str, str]:
         return (dest.capitalize(), slot.capitalize())
 
-    def load_cabs(self):
-        if os.path.exists("cabs.json"):
-            file_handle = open("cabs.json", "r")
-            data = json.load(file_handle)
-            file_handle.close()
-            
-            self.cabs = []
-            for cab_dict in data:
-                new_cab = Cab(
-                    driver=cab_dict["driver"],
-                    seats=cab_dict["seats"],
-                    destination=cab_dict["destination"],
-                    time_slot=cab_dict["time_slot"],
-                    has_left=cab_dict.get("has_left", False),
-                    passengers=cab_dict.get("passengers", [])
-                )
-                self.cabs.append(new_cab)
-            print("Loaded cabs from cabs.json successfully.")
+    def load_data(self):
+        if os.path.exists(STATE_FILE):
+            try:
+                file_handle = open(STATE_FILE, "r")
+                state = json.load(file_handle)
+                file_handle.close()
+                
+                self.request_counter = state.get("request_counter", 0)
+                
+                self.cabs = []
+                for cab_dict in state.get("cabs", []):
+                    self.cabs.append(Cab.from_dict(cab_dict))
+                
+                for req_dict in state.get("waiting_requests", []):
+                    req = RideRequest.from_dict(req_dict)
+                    key = self.get_trip_key(req.destination, req.time_slot)
+                    self.queues[key].push(req)
+                    
+                print("Loaded previous session state from app_state.json successfully.")
+                return
+            except Exception as e:
+                print(f"Warning: Failed to parse {STATE_FILE} ({e}). Starting fresh.")
+
+        if os.path.exists(CABS_FILE):
+            try:
+                file_handle = open(CABS_FILE, "r")
+                data = json.load(file_handle)
+                file_handle.close()
+                
+                self.cabs = []
+                for cab_dict in data:
+                    self.cabs.append(Cab.from_dict(cab_dict))
+                print("Loaded initial cabs from cabs.json successfully.")
+            except Exception as e:
+                print(f"Error loading {CABS_FILE}: {e}")
         else:
-            print("Warning: cabs.json not found. Starting with zero cabs.")
+            print("Warning: Neither state file nor cabs.json found. Starting with zero cabs.")
+
+    def save_data(self):
+        waiting_requests = []
+        for queue in self.queues.values():
+            for req in queue.get_all():
+                waiting_requests.append(req.to_dict())
+
+        state = {
+            "request_counter": self.request_counter,
+            "cabs": [cab.to_dict() for cab in self.cabs],
+            "waiting_requests": waiting_requests
+        }
+
+        try:
+            file_handle = open(STATE_FILE, "w")
+            json.dump(state, file_handle, indent=2)
+            file_handle.close()
+        except Exception as e:
+            print(f"Failed to save state: {e}")
 
     def add_request(self):
         print("\n--- Add New Ride Request ---")
@@ -120,15 +220,16 @@ class CabPoolApp:
             request_id=self.request_counter
         )
         
-
         key = self.get_trip_key(destination, time_slot)
         self.queues[key].push(request)
+        
+        self.save_data()
         print(f"Success! Request added to waiting list for {destination} ({time_slot}).")
 
     def show_status(self):
-        print("\n=== CURRENT SYSTEM STATUS ===")
+        print("\nCURRENT SYSTEM STATUS")
         
-        print("\n--- Waiting Lists (Grouped by Trip & Sorted by Seniority) ---")
+        print("\nWaiting Lists")
         has_waiting_students = False
         for key, queue in self.queues.items():
             if not queue.is_empty():
@@ -141,7 +242,7 @@ class CabPoolApp:
         if not has_waiting_students:
             print("  No students currently waiting.")
 
-        print("\n--- Cabs Status ---")
+        print("\nCabs Status")
         for idx, cab in enumerate(self.cabs, 1):
             if cab.has_left:
                 status = "LEFT"
@@ -153,7 +254,7 @@ class CabPoolApp:
                   f"Seats: {len(cab.passengers)}/{cab.seats} | Status: {status} | Passengers: {passengers_str}")
 
     def find_matches(self):
-        print("\n=== MATCH PREVIEW (By Seniority - No changes made) ===")
+        print("\nMATCH PREVIEW")
         
         open_cabs = []
         for cab in self.cabs:
@@ -183,12 +284,11 @@ class CabPoolApp:
 
     def dispatch_cab(self):
         print("\n--- Dispatch a Cab ---")
-        dest_input = input("Select Destination ({}) : ".format('/'.join(VALID_DESTINATIONS))).strip().capitalize()
-        slot_input = input("Select Time Slot ({}) : ".format('/'.join(VALID_TIME_SLOTS))).strip().capitalize()
+        dest_input = input(f"Select Destination ({'/' .join(VALID_DESTINATIONS)}): ").strip().capitalize()
+        slot_input = input(f"Select Time Slot ({'/' .join(VALID_TIME_SLOTS)}): ").strip().capitalize()
 
         key = self.get_trip_key(dest_input, slot_input)
         queue = self.queues[key]
-
 
         matching_cab = None
         for cab in self.cabs:
@@ -219,6 +319,8 @@ class CabPoolApp:
             matching_cab.passengers.append(student.name)
 
         matching_cab.has_left = True
+        
+        self.save_data()
 
         boarded_names = []
         for student in boarded_students:
@@ -227,29 +329,28 @@ class CabPoolApp:
         print(f"Success! Cab driven by {matching_cab.driver} has left for {dest_input} ({slot_input}) with passengers: {', '.join(boarded_names)}.")
 
     def menu(self):
-            while True:
+        while True:
+            print("\nMenu\n")
+            print("1. Add a new ride request")
+            print("2. See status")
+            print("3. Find Matches")
+            print("4. Dispatch a Cab")
+            print("5. Quit")
+            choice = input("Enter choice (1-5): ").strip()
 
-                print("\nMENU\n")
-
-                print("1. Add a new ride request")
-                print("2. See status (Waiting list & Cabs)")
-                print("3. Find Matches")
-                print("4. Dispatch a Cab")
-                print("5. Quit")
-                choice = input("Enter choice (1-5): ").strip()
-
-                if choice == "1":
-                    self.add_request()
-                elif choice == "2":
-                    self.show_status()
-                elif choice == "3":
-                    self.find_matches()
-                elif choice == "4":
-                    self.dispatch_cab()
-                elif choice == "5":
-                    break
-                else:
-                    print("Invalid choice. Please enter a number between 1 and 5.")
+            if choice == "1":
+                self.add_request()
+            elif choice == "2":
+                self.show_status()
+            elif choice == "3":
+                self.find_matches()
+            elif choice == "4":
+                self.dispatch_cab()
+            elif choice == "5":
+                self.save_data()
+                break
+            else:
+                print("Invalid choice. Please enter a number between 1 and 5.")
 
 if __name__ == "__main__":
     app = CabPoolApp()
