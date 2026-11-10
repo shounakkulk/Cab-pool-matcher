@@ -30,6 +30,7 @@ class Cab:
         else: 
             self.passengers = []
 
+    @property
     def remaining_seats(self) -> int:
         return self.seats - len(self.passengers)
 
