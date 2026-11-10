@@ -1,0 +1,27 @@
+[
+  {
+    "driver": "Driver1",
+    "seats": 4,
+    "destination": "Delhi",
+    "time_slot": "Morning",
+    "has_left": false,
+    "passengers": []
+  },
+  {
+    "driver": "Driver2",
+    "seats": 3,
+    "destination": "Jaipur",
+    "time_slot": "Evening",
+    "has_left": false,
+    "passengers": []
+  },
+  {
+    "driver": "Driver3",
+    "seats": 5,
+    "destination": "Jaipur",
+    "time_slot": "Night",
+    "has_left": false,
+    "passengers": []
+  }
+
+]
