@@ -45,7 +45,42 @@ The app reads initial cab data from `cabs.json`. It expects an array of cab obje
 
 I used JSON (`app_state.json`) for saving state between runs instead of `pickle`. JSON is human-readable, easier to inspect while testing/debugging, and doesn't run arbitrary Python code risks like `pickle` does.
 
-The app automatically updates `app_state.json` whenever a student is added or a cab is dispatched so nothing gets lost if the script is closed unexpectedly. If `app_state.json` is missing or corrupted, the app falls back to `cabs.json` without crashing.
+Whenever you add a request, dispatch a cab, or quit the app, it creates/updates app_state.json with a snapshot of everything so you don't lose progress even if you hit Ctrl+C. It keeps track of three things:
+
+request_counter: so new requests keep getting unique IDs after a restart.
+
+cabs: the updated list of cabs, including who is inside and whether has_left is true or false.
+
+waiting_requests: everyone still in the queues, saved with their original request_id so people in the same year keep their exact spot in line.
+
+Here is what app_state.json looks like after a few actions:
+
+```
+{
+  "request_counter": 3,
+  "cabs": [
+    {
+      "driver": "Ramesh",
+      "seats": 4,
+      "destination": "Delhi",
+      "time_slot": "Morning",
+      "has_left": true,
+      "passengers": ["Aarav", "Rohan"]
+    }
+  ],
+  "waiting_requests": [
+    {
+      "name": "Kabir",
+      "destination": "Jaipur",
+      "time_slot": "Evening",
+      "year": 2,
+      "request_id": 3
+    }
+  ]
+}
+
+```
+If app_state.json is missing or gets corrupted, the app just falls back to cabs.json and starts fresh.
 
 ## Technical Notes & Edge Cases
 
